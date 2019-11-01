@@ -371,6 +371,17 @@ class ConfigSchema(Schema):
                           "one of its partitions is 0, for bootstrapping)."},
     )
 
+    shuffle_mode: str = attr.ib(
+        default="all"
+    )
+    shuffle_size: int = attr.ib(
+        default=1
+    )
+
+    shuffle_order: int = attr.ib(
+        default=2
+    )
+
     # Additional global validation.
 
     def __attrs_post_init__(self):

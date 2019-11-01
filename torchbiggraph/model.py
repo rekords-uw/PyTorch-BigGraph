@@ -37,7 +37,6 @@ from torchbiggraph.tensorlist import TensorList
 from torchbiggraph.types import FloatTensorType, LongTensorType, Side
 from torchbiggraph.util import CouldNotLoadData
 
-
 logger = logging.getLogger("torchbiggraph")
 
 
@@ -83,7 +82,7 @@ def match_shape(tensor, *expected_shape):
         ", ".join("%d" % d for d in actual_shape),
         ", ".join("..." if d is Ellipsis else "*" if d < 0 else "%d" % d
                   for d in expected_shape)),
-    )
+                      )
     if Ellipsis not in expected_shape:
         if len(actual_shape) != len(expected_shape):
             raise error
@@ -128,10 +127,32 @@ class AbstractEmbedding(nn.Module, ABC):
 
 class SimpleEmbedding(AbstractEmbedding):
 
-    def __init__(self, weight: nn.Parameter, max_norm: Optional[float] = None):
+    def __init__(self, weight: nn.Parameter,
+                 max_norm: Optional[float] = None,
+                 shuffle_mode='all',
+                 shuffle_size=1,
+                 shuffle_order=2):
         super().__init__()
         self.weight: nn.Parameter = weight
         self.max_norm: Optional[float] = max_norm
+
+        self.random_list = torch.empty(0, dtype=int)
+
+        if shuffle_mode == 'all':
+            for i in range(shuffle_size):
+                tens = torch.randperm(self.weight.size(0))
+                self.random_list = torch.cat([self.random_list, tens])
+
+        elif shuffle_mode == 'mult':
+            orders = []
+            for i in range(shuffle_order):
+                orders.append(torch.randperm(self.weight.size(0)))
+            for i in range(shuffle_size):
+                self.random_list = torch.cat([self.random_list, orders[i % shuffle_order]])
+
+        self.curr_pos = 0
+        self.num_wraps = 0
+        self.shuffle_mode = shuffle_mode
 
     def forward(self, input_: EntityList) -> FloatTensorType:
         return self.get(input_.to_tensor())
@@ -145,7 +166,35 @@ class SimpleEmbedding(AbstractEmbedding):
         return self.get(torch.arange(self.weight.size(0), dtype=torch.long))
 
     def sample_entities(self, *dims: int) -> FloatTensorType:
-        return self.get(torch.randint(low=0, high=self.weight.size(0), size=dims))
+
+        # return regular negative samples if uniform selected
+        if self.shuffle_mode == 'uniform':
+            return self.get(torch.randint(low=0, high=self.weight.size(0), size=dims))
+
+        total = dims[0] * dims[1]
+
+        list_size = self.random_list.size(0)
+        n_wraps = (self.curr_pos + total) // list_size
+
+        temp = torch.empty(total, dtype=int)
+
+        todo = total
+        curr = 0
+        for i in range(n_wraps + 1):
+            left = list_size - self.curr_pos
+            if todo >= left:
+                this_wrap = left
+            else:
+                this_wrap = todo
+
+            temp[curr: curr + this_wrap] = self.random_list[self.curr_pos: self.curr_pos + this_wrap]
+            todo -= this_wrap
+            curr += this_wrap
+            self.curr_pos = (self.curr_pos + this_wrap) % list_size
+
+        ret = temp.view(dims)  # resize flattened list of indices
+        vals = self.get(ret)
+        return vals
 
 
 class FeaturizedEmbedding(AbstractEmbedding):
@@ -175,7 +224,6 @@ class FeaturizedEmbedding(AbstractEmbedding):
 
 
 class AbstractOperator(nn.Module, ABC):
-
     """Perform the same operation on many vectors.
 
     Given a tensor containing a set of vectors, perform the same operation on
@@ -292,7 +340,6 @@ class ComplexDiagonalOperator(AbstractOperator):
 
 
 class AbstractDynamicOperator(nn.Module, ABC):
-
     """Perform different operations on many vectors.
 
     The inputs are a tensor containing a set of vectors and another tensor
@@ -313,9 +360,9 @@ class AbstractDynamicOperator(nn.Module, ABC):
 
     @abstractmethod
     def forward(
-        self,
-        embeddings: FloatTensorType,
-        operator_idxs: LongTensorType,
+            self,
+            embeddings: FloatTensorType,
+            operator_idxs: LongTensorType,
     ) -> FloatTensorType:
         pass
 
@@ -327,9 +374,9 @@ DYNAMIC_OPERATORS = PluginRegistry[AbstractDynamicOperator]()
 class IdentityDynamicOperator(AbstractDynamicOperator):
 
     def forward(
-        self,
-        embeddings: FloatTensorType,
-        operator_idxs: LongTensorType,
+            self,
+            embeddings: FloatTensorType,
+            operator_idxs: LongTensorType,
     ) -> FloatTensorType:
         match_shape(embeddings, ..., self.dim)
         match_shape(operator_idxs, *embeddings.size()[:-1])
@@ -344,9 +391,9 @@ class DiagonalDynamicOperator(AbstractDynamicOperator):
         self.diagonals = nn.Parameter(torch.ones((self.num_operations, self.dim)))
 
     def forward(
-        self,
-        embeddings: FloatTensorType,
-        operator_idxs: LongTensorType,
+            self,
+            embeddings: FloatTensorType,
+            operator_idxs: LongTensorType,
     ) -> FloatTensorType:
         match_shape(embeddings, ..., self.dim)
         match_shape(operator_idxs, *embeddings.size()[:-1])
@@ -361,9 +408,9 @@ class TranslationDynamicOperator(AbstractDynamicOperator):
         self.translations = nn.Parameter(torch.zeros((self.num_operations, self.dim)))
 
     def forward(
-        self,
-        embeddings: FloatTensorType,
-        operator_idxs: LongTensorType,
+            self,
+            embeddings: FloatTensorType,
+            operator_idxs: LongTensorType,
     ) -> FloatTensorType:
         match_shape(embeddings, ..., self.dim)
         match_shape(operator_idxs, *embeddings.size()[:-1])
@@ -379,9 +426,9 @@ class LinearDynamicOperator(AbstractDynamicOperator):
             torch.diag_embed(torch.ones(()).expand(num_operations, dim)))
 
     def forward(
-        self,
-        embeddings: FloatTensorType,
-        operator_idxs: LongTensorType,
+            self,
+            embeddings: FloatTensorType,
+            operator_idxs: LongTensorType,
     ) -> FloatTensorType:
         match_shape(embeddings, ..., self.dim)
         match_shape(operator_idxs, *embeddings.size()[:-1])
@@ -400,9 +447,9 @@ class AffineDynamicOperator(AbstractDynamicOperator):
         self.translations = nn.Parameter(torch.zeros((self.num_operations, self.dim)))
 
     def forward(
-        self,
-        embeddings: FloatTensorType,
-        operator_idxs: LongTensorType,
+            self,
+            embeddings: FloatTensorType,
+            operator_idxs: LongTensorType,
     ) -> FloatTensorType:
         match_shape(embeddings, ..., self.dim)
         match_shape(operator_idxs, *embeddings.size()[:-1])
@@ -433,9 +480,9 @@ class ComplexDiagonalDynamicOperator(AbstractDynamicOperator):
         self.imag = nn.Parameter(torch.zeros((self.num_operations, self.dim // 2)))
 
     def forward(
-        self,
-        embeddings: FloatTensorType,
-        operator_idxs: LongTensorType,
+            self,
+            embeddings: FloatTensorType,
+            operator_idxs: LongTensorType,
     ) -> FloatTensorType:
         match_shape(embeddings, ..., self.dim)
         match_shape(operator_idxs, *embeddings.size()[:-1])
@@ -450,10 +497,10 @@ class ComplexDiagonalDynamicOperator(AbstractDynamicOperator):
 
 
 def instantiate_operator(
-    operator: str,
-    side: Side,
-    num_dynamic_rels: int,
-    dim: int,
+        operator: str,
+        side: Side,
+        num_dynamic_rels: int,
+        dim: int,
 ) -> Optional[Union[AbstractOperator, AbstractDynamicOperator]]:
     if num_dynamic_rels > 0:
         dynamic_operator_class = DYNAMIC_OPERATORS.get_class(operator)
@@ -466,7 +513,6 @@ def instantiate_operator(
 
 
 class AbstractComparator(nn.Module, ABC):
-
     """Calculate scores between pairs of given vectors in a certain space.
 
     The input consists of four tensors each representing a set of vectors: one
@@ -504,18 +550,18 @@ class AbstractComparator(nn.Module, ABC):
 
     @abstractmethod
     def prepare(
-        self,
-        embs: FloatTensorType,
+            self,
+            embs: FloatTensorType,
     ) -> FloatTensorType:
         pass
 
     @abstractmethod
     def forward(
-        self,
-        lhs_pos: FloatTensorType,
-        rhs_pos: FloatTensorType,
-        lhs_neg: FloatTensorType,
-        rhs_neg: FloatTensorType,
+            self,
+            lhs_pos: FloatTensorType,
+            rhs_pos: FloatTensorType,
+            lhs_neg: FloatTensorType,
+            rhs_neg: FloatTensorType,
     ) -> Tuple[FloatTensorType, FloatTensorType, FloatTensorType]:
         pass
 
@@ -527,17 +573,17 @@ COMPARATORS = PluginRegistry[AbstractComparator]()
 class DotComparator(AbstractComparator):
 
     def prepare(
-        self,
-        embs: FloatTensorType,
+            self,
+            embs: FloatTensorType,
     ) -> FloatTensorType:
         return embs
 
     def forward(
-        self,
-        lhs_pos: FloatTensorType,
-        rhs_pos: FloatTensorType,
-        lhs_neg: FloatTensorType,
-        rhs_neg: FloatTensorType,
+            self,
+            lhs_pos: FloatTensorType,
+            rhs_pos: FloatTensorType,
+            lhs_neg: FloatTensorType,
+            rhs_neg: FloatTensorType,
     ) -> Tuple[FloatTensorType, FloatTensorType, FloatTensorType]:
         num_chunks, num_pos_per_chunk, dim = match_shape(lhs_pos, -1, -1, -1)
         match_shape(rhs_pos, num_chunks, num_pos_per_chunk, dim)
@@ -557,8 +603,8 @@ class DotComparator(AbstractComparator):
 class CosComparator(AbstractComparator):
 
     def prepare(
-        self,
-        embs: FloatTensorType,
+            self,
+            embs: FloatTensorType,
     ) -> FloatTensorType:
         # Dividing by the norm costs N * dim divisions, multiplying by the
         # reciprocal of the norm costs N divisions and N * dim multiplications.
@@ -567,11 +613,11 @@ class CosComparator(AbstractComparator):
         return embs * norm.reciprocal().unsqueeze(-1)
 
     def forward(
-        self,
-        lhs_pos: FloatTensorType,
-        rhs_pos: FloatTensorType,
-        lhs_neg: FloatTensorType,
-        rhs_neg: FloatTensorType,
+            self,
+            lhs_pos: FloatTensorType,
+            rhs_pos: FloatTensorType,
+            lhs_neg: FloatTensorType,
+            rhs_neg: FloatTensorType,
     ) -> Tuple[FloatTensorType, FloatTensorType, FloatTensorType]:
         num_chunks, num_pos_per_chunk, dim = match_shape(lhs_pos, -1, -1, -1)
         match_shape(rhs_pos, num_chunks, num_pos_per_chunk, dim)
@@ -588,8 +634,8 @@ class CosComparator(AbstractComparator):
 
 
 def batched_all_pairs_squared_l2_dist(
-    a: FloatTensorType,
-    b: FloatTensorType,
+        a: FloatTensorType,
+        b: FloatTensorType,
 ) -> FloatTensorType:
     """For each batch, return the squared L2 distance between each pair of vectors
 
@@ -615,8 +661,8 @@ def batched_all_pairs_squared_l2_dist(
 
 
 def batched_all_pairs_l2_dist(
-    a: FloatTensorType,
-    b: FloatTensorType,
+        a: FloatTensorType,
+        b: FloatTensorType,
 ) -> FloatTensorType:
     squared_res = batched_all_pairs_squared_l2_dist(a, b)
     res = squared_res.clamp_min_(1e-30).sqrt_()
@@ -627,17 +673,17 @@ def batched_all_pairs_l2_dist(
 class L2Comparator(AbstractComparator):
 
     def prepare(
-        self,
-        embs: FloatTensorType,
+            self,
+            embs: FloatTensorType,
     ) -> FloatTensorType:
         return embs
 
     def forward(
-        self,
-        lhs_pos: FloatTensorType,
-        rhs_pos: FloatTensorType,
-        lhs_neg: FloatTensorType,
-        rhs_neg: FloatTensorType,
+            self,
+            lhs_pos: FloatTensorType,
+            rhs_pos: FloatTensorType,
+            lhs_neg: FloatTensorType,
+            rhs_neg: FloatTensorType,
     ) -> Tuple[FloatTensorType, FloatTensorType, FloatTensorType]:
         num_chunks, num_pos_per_chunk, dim = match_shape(lhs_pos, -1, -1, -1)
         match_shape(rhs_pos, num_chunks, num_pos_per_chunk, dim)
@@ -656,17 +702,17 @@ class L2Comparator(AbstractComparator):
 class SquaredL2Comparator(AbstractComparator):
 
     def prepare(
-        self,
-        embs: FloatTensorType,
+            self,
+            embs: FloatTensorType,
     ) -> FloatTensorType:
         return embs
 
     def forward(
-        self,
-        lhs_pos: FloatTensorType,
-        rhs_pos: FloatTensorType,
-        lhs_neg: FloatTensorType,
-        rhs_neg: FloatTensorType,
+            self,
+            lhs_pos: FloatTensorType,
+            rhs_pos: FloatTensorType,
+            lhs_neg: FloatTensorType,
+            rhs_neg: FloatTensorType,
     ) -> Tuple[FloatTensorType, FloatTensorType, FloatTensorType]:
         num_chunks, num_pos_per_chunk, dim = match_shape(lhs_pos, -1, -1, -1)
         match_shape(rhs_pos, num_chunks, num_pos_per_chunk, dim)
@@ -688,17 +734,17 @@ class BiasedComparator(AbstractComparator):
         self.base_comparator = base_comparator
 
     def prepare(
-        self,
-        embs: FloatTensorType,
+            self,
+            embs: FloatTensorType,
     ) -> FloatTensorType:
         return torch.cat([embs[..., :1], self.base_comparator.prepare(embs[..., 1:])], dim=-1)
 
     def forward(
-        self,
-        lhs_pos: FloatTensorType,
-        rhs_pos: FloatTensorType,
-        lhs_neg: FloatTensorType,
-        rhs_neg: FloatTensorType,
+            self,
+            lhs_pos: FloatTensorType,
+            rhs_pos: FloatTensorType,
+            lhs_neg: FloatTensorType,
+            rhs_neg: FloatTensorType,
     ) -> Tuple[FloatTensorType, FloatTensorType, FloatTensorType]:
         num_chunks, num_pos_per_chunk, dim = match_shape(lhs_pos, -1, -1, -1)
         match_shape(rhs_pos, num_chunks, num_pos_per_chunk, dim)
@@ -766,20 +812,20 @@ class MultiRelationEmbedder(nn.Module):
     EMB_PREFIX = "emb_"
 
     def __init__(
-        self,
-        dim: int,
-        relations: List[RelationSchema],
-        entities: Dict[str, EntitySchema],
-        num_batch_negs: int,
-        num_uniform_negs: int,
-        disable_lhs_negs: bool,
-        disable_rhs_negs: bool,
-        lhs_operators: Sequence[Optional[Union[AbstractOperator, AbstractDynamicOperator]]],
-        rhs_operators: Sequence[Optional[Union[AbstractOperator, AbstractDynamicOperator]]],
-        comparator: AbstractComparator,
-        global_emb: bool = False,
-        max_norm: Optional[float] = None,
-        num_dynamic_rels: int = 0,
+            self,
+            dim: int,
+            relations: List[RelationSchema],
+            entities: Dict[str, EntitySchema],
+            num_batch_negs: int,
+            num_uniform_negs: int,
+            disable_lhs_negs: bool,
+            disable_rhs_negs: bool,
+            lhs_operators: Sequence[Optional[Union[AbstractOperator, AbstractDynamicOperator]]],
+            rhs_operators: Sequence[Optional[Union[AbstractOperator, AbstractDynamicOperator]]],
+            comparator: AbstractComparator,
+            global_emb: bool = False,
+            max_norm: Optional[float] = None,
+            num_dynamic_rels: int = 0,
     ) -> None:
         super().__init__()
 
@@ -815,11 +861,13 @@ class MultiRelationEmbedder(nn.Module):
 
         self.max_norm: Optional[float] = max_norm
 
-    def set_embeddings(self, entity: str, weights: nn.Parameter, side: Side):
+    def set_embeddings(self, entity: str, weights: nn.Parameter, side: Side, shuffle_mode='all', shuffle_size=1,
+                       shuffle_order=2):
         if self.entities[entity].featurized:
             emb = FeaturizedEmbedding(weights, max_norm=self.max_norm)
         else:
-            emb = SimpleEmbedding(weights, max_norm=self.max_norm)
+            emb = SimpleEmbedding(weights, max_norm=self.max_norm, shuffle_mode=shuffle_mode, shuffle_size=shuffle_size,
+                                  shuffle_order=shuffle_order)
         side.pick(self.lhs_embs, self.rhs_embs)[self.EMB_PREFIX + entity] = emb
 
     def clear_embeddings(self, entity: str, side: Side) -> None:
@@ -839,11 +887,11 @@ class MultiRelationEmbedder(nn.Module):
             return emb.weight
 
     def adjust_embs(
-        self,
-        embs: FloatTensorType,
-        rel: Union[int, LongTensorType],
-        entity_type: str,
-        operator: Union[None, AbstractOperator, AbstractDynamicOperator],
+            self,
+            embs: FloatTensorType,
+            rel: Union[int, LongTensorType],
+            entity_type: str,
+            operator: Union[None, AbstractOperator, AbstractDynamicOperator],
     ) -> FloatTensorType:
 
         # 1. Apply the global embedding, if enabled
@@ -865,15 +913,15 @@ class MultiRelationEmbedder(nn.Module):
         return embs
 
     def prepare_negatives(
-        self,
-        pos_input: EntityList,
-        pos_embs: FloatTensorType,
-        module: AbstractEmbedding,
-        type_: Negatives,
-        num_uniform_neg: int,
-        rel: Union[int, LongTensorType],
-        entity_type: str,
-        operator: Union[None, AbstractOperator, AbstractDynamicOperator],
+            self,
+            pos_input: EntityList,
+            pos_embs: FloatTensorType,
+            module: AbstractEmbedding,
+            type_: Negatives,
+            num_uniform_neg: int,
+            rel: Union[int, LongTensorType],
+            entity_type: str,
+            operator: Union[None, AbstractOperator, AbstractDynamicOperator],
     ) -> Tuple[FloatTensorType, Mask]:
         """Given some chunked positives, set up chunks of negatives.
 
@@ -969,8 +1017,8 @@ class MultiRelationEmbedder(nn.Module):
         return neg_embs, ignore_mask
 
     def forward(
-        self,
-        edges: EdgeList,
+            self,
+            edges: EdgeList,
     ) -> Scores:
         num_pos = len(edges)
 
@@ -1099,21 +1147,21 @@ class MultiRelationEmbedder(nn.Module):
         return Scores(lhs_pos_scores, rhs_pos_scores, lhs_neg_scores, rhs_neg_scores)
 
     def forward_direction_agnostic(
-        self,
-        src: EntityList,
-        dst: EntityList,
-        rel: Union[int, LongTensorType],
-        src_entity_type: str,
-        dst_entity_type: str,
-        src_operator: Union[None, AbstractOperator, AbstractDynamicOperator],
-        dst_operator: Union[None, AbstractOperator, AbstractDynamicOperator],
-        src_module: AbstractEmbedding,
-        dst_module: AbstractEmbedding,
-        src_pos: FloatTensorType,
-        dst_pos: FloatTensorType,
-        chunk_size: int,
-        src_negative_sampling_method: Negatives,
-        dst_negative_sampling_method: Negatives,
+            self,
+            src: EntityList,
+            dst: EntityList,
+            rel: Union[int, LongTensorType],
+            src_entity_type: str,
+            dst_entity_type: str,
+            src_operator: Union[None, AbstractOperator, AbstractDynamicOperator],
+            dst_operator: Union[None, AbstractOperator, AbstractDynamicOperator],
+            src_module: AbstractEmbedding,
+            dst_module: AbstractEmbedding,
+            src_pos: FloatTensorType,
+            dst_pos: FloatTensorType,
+            chunk_size: int,
+            src_negative_sampling_method: Negatives,
+            dst_negative_sampling_method: Negatives,
     ):
         num_pos = len(src)
         assert len(dst) == num_pos

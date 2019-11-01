@@ -37,13 +37,13 @@ def get_torchbiggraph_config():
         comparator='dot',
 
         # Training
-        num_epochs=50,
+        num_epochs=15,
         num_uniform_negs=1000,
         loss_fn='softmax',
         lr=0.1,
 
         # Evaluation during training
-        eval_fraction=0,  # to reproduce results, we need to use all training data
+        eval_fraction=.1,  # to reproduce results, we need to use all training data
     )
 
     return config

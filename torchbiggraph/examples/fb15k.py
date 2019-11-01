@@ -49,7 +49,21 @@ def main():
                         help='where to save processed data')
     parser.add_argument('--no-filtered', dest='filtered', action='store_false',
                         help='Run unfiltered eval')
+    parser.add_argument('--shuffle_mode', type=str)
+    parser.add_argument('--shuffle_size', type=int)
+    parser.add_argument('--shuffle_order', type=int)
     args = parser.parse_args()
+
+    shuffle_mode = args.shuffle_mode
+    shuffle_size = args.shuffle_size
+    shuffle_order = args.shuffle_order
+
+    if shuffle_mode is None:
+        shuffle_mode = 'all'
+    if shuffle_size is None:
+        shuffle_size = 1
+    if shuffle_order is None:
+        shuffle_order = 1
 
     if args.param is not None:
         overrides = chain.from_iterable(args.param)  # flatten
@@ -83,7 +97,9 @@ def main():
         dynamic_relations=config.dynamic_relations,
     )
 
-    train_config = attr.evolve(config, edge_paths=[output_train_path])
+    train_config = attr.evolve(config, edge_paths=[output_train_path], shuffle_mode=shuffle_mode,
+                               shuffle_size=shuffle_size, shuffle_order=shuffle_order)
+
     train(train_config, subprocess_init=subprocess_init)
 
     relations = [attr.evolve(r, all_negs=True) for r in config.relations]

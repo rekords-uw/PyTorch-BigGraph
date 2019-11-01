@@ -544,8 +544,12 @@ def train_and_report_stats(
     for entity, econfig in config.entities.items():
         if econfig.num_partitions == 1:
             embs, optim_state = load_embeddings(entity, Partition(0))
-            model.set_embeddings(entity, embs, Side.LHS)
-            model.set_embeddings(entity, embs, Side.RHS)
+            model.set_embeddings(entity, embs, Side.LHS, shuffle_mode=config.shuffle_mode,
+                                 shuffle_size=config.shuffle_size,
+                                 shuffle_order=config.shuffle_order)
+            model.set_embeddings(entity, embs, Side.RHS, shuffle_mode=config.shuffle_mode,
+                                 shuffle_size=config.shuffle_size,
+                                 shuffle_order=config.shuffle_order)
             optimizer = make_optimizer([embs], True)
             if optim_state is not None:
                 optimizer.load_state_dict(optim_state)
@@ -633,7 +637,9 @@ def train_and_report_stats(
                     entity, part, strict=strict, force_dirty=force_dirty)
                 io_bytes += embs.numel() * embs.element_size()  # ignore optim state
 
-            model.set_embeddings(entity, embs, side)
+            model.set_embeddings(entity, embs, side,shuffle_mode=config.shuffle_mode,
+                                 shuffle_size=config.shuffle_size,
+                                 shuffle_order=config.shuffle_order)
             tmp_emb[part_key] = embs
 
             optim_key = (entity, part)
