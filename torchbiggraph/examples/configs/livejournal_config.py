@@ -28,14 +28,21 @@ def get_torchbiggraph_config():
             'rhs': 'user_id',
             'operator': 'none',
         }],
+        # dynamic_relations=True,
 
         # Scoring model
         dimension=1024,
         global_emb=False,
+        # comparator='dot',
 
         # Training
-        num_epochs=30,
+        num_epochs=7,
+        # num_uniform_negs=1000,
+        # loss_fn='softmax',
         lr=0.001,
+
+        # Evaluation during training
+        eval_fraction=.1,  # to reproduce results, we need to use all training data
 
         # Misc
         hogwild_delay=2,

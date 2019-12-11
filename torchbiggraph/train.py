@@ -121,9 +121,10 @@ class Trainer(AbstractBatchProcessor):
         model: MultiRelationEmbedder,
         batch_edges: EdgeList,
     ) -> Stats:
+        # print("TRAINER")
         model.zero_grad()
 
-        scores = model(batch_edges)
+        scores = model(batch_edges) # this calls the forward() in model.py, which eventually calls for negative samples
 
         lhs_loss = self.loss_fn(scores.lhs_pos, scores.lhs_neg)
         rhs_loss = self.loss_fn(scores.rhs_pos, scores.rhs_neg)
@@ -162,6 +163,7 @@ class TrainingRankingEvaluator(RankingEvaluator):
         model: MultiRelationEmbedder,
         batch_edges: EdgeList,
     ) -> Stats:
+        # print("EVALUATOR")
         with override_model(model,
                             num_batch_negs=self.override_num_batch_negs,
                             num_uniform_negs=self.override_num_uniform_negs):
@@ -518,7 +520,7 @@ def train_and_report_stats(
         model = make_model(config)
     model.share_memory()
     if trainer is None:
-        trainer = Trainer(
+        trainer = Trainer( # Could put some config in here and in evaluator below?
             global_optimizer=make_optimizer(model.parameters(), False),
             loss_fn=config.loss_fn,
             margin=config.margin,

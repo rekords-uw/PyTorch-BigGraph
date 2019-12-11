@@ -54,8 +54,9 @@ class RankingEvaluator(AbstractBatchProcessor):
         model: MultiRelationEmbedder,
         batch_edges: EdgeList,
     ) -> Stats:
+        # print("EVALUATOR")
         with torch.no_grad():
-            scores = model(batch_edges)
+            scores = model(batch_edges, evaluating=True)
         return self.eval(scores, batch_edges)
 
     def eval(

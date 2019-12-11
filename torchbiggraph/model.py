@@ -121,7 +121,7 @@ class AbstractEmbedding(nn.Module, ABC):
         pass
 
     @abstractmethod
-    def sample_entities(self, *dims: int) -> FloatTensorType:
+    def sample_entities(self, *dims: int, evaluating: bool=False) -> FloatTensorType:
         pass
 
 
@@ -165,11 +165,14 @@ class SimpleEmbedding(AbstractEmbedding):
     def get_all_entities(self) -> FloatTensorType:
         return self.get(torch.arange(self.weight.size(0), dtype=torch.long))
 
-    def sample_entities(self, *dims: int) -> FloatTensorType:
+    def sample_entities(self, *dims: int, evaluating: bool=False) -> FloatTensorType:
+        # print("Evaluating=", evaluating)
 
         # return regular negative samples if uniform selected
-        if self.shuffle_mode == 'uniform':
+        if self.shuffle_mode == 'uniform' or evaluating:
             return self.get(torch.randint(low=0, high=self.weight.size(0), size=dims))
+
+        #print("GETTING NEGATIVE SAMPLE")
 
         total = dims[0] * dims[1]
 
@@ -922,6 +925,7 @@ class MultiRelationEmbedder(nn.Module):
             rel: Union[int, LongTensorType],
             entity_type: str,
             operator: Union[None, AbstractOperator, AbstractDynamicOperator],
+            evaluating: bool=False
     ) -> Tuple[FloatTensorType, Mask]:
         """Given some chunked positives, set up chunks of negatives.
 
@@ -940,6 +944,9 @@ class MultiRelationEmbedder(nn.Module):
         scores that must be ignored.
 
         """
+        # print(evaluator)
+
+
         num_pos = len(pos_input)
         num_chunks, chunk_size, dim = match_shape(pos_embs, -1, -1, -1)
         last_chunk_size = num_pos - (num_chunks - 1) * chunk_size
@@ -949,7 +956,7 @@ class MultiRelationEmbedder(nn.Module):
             neg_embs = torch.empty((num_chunks, 0, dim))
         elif type_ is Negatives.UNIFORM:
             uniform_neg_embs = module.sample_entities(
-                num_chunks, num_uniform_neg)
+                num_chunks, num_uniform_neg, evaluating=evaluating)
             neg_embs = self.adjust_embs(
                 uniform_neg_embs,
                 rel, entity_type, operator,
@@ -959,7 +966,7 @@ class MultiRelationEmbedder(nn.Module):
             if num_uniform_neg > 0:
                 try:
                     uniform_neg_embs = module.sample_entities(
-                        num_chunks, num_uniform_neg)
+                        num_chunks, num_uniform_neg, evaluating=evaluating)
                 except NotImplementedError:
                     pass  # only use pos_embs i.e. batch negatives
                 else:
@@ -1019,6 +1026,7 @@ class MultiRelationEmbedder(nn.Module):
     def forward(
             self,
             edges: EdgeList,
+            evaluating: bool=False
     ) -> Scores:
         num_pos = len(edges)
 
@@ -1090,6 +1098,7 @@ class MultiRelationEmbedder(nn.Module):
                 chunk_size,
                 lhs_negative_sampling_method,
                 rhs_negative_sampling_method,
+                evaluating=evaluating
             )
             lhs_pos_scores = rhs_pos_scores = pos_scores
 
@@ -1125,6 +1134,7 @@ class MultiRelationEmbedder(nn.Module):
                 chunk_size,
                 lhs_negative_sampling_method,
                 Negatives.NONE,
+                evaluating=evaluating
             )
             # "Reverse" edges: apply operator to lhs, sample negatives on rhs.
             rhs_pos_scores, rhs_neg_scores, _ = self.forward_direction_agnostic(
@@ -1142,6 +1152,7 @@ class MultiRelationEmbedder(nn.Module):
                 chunk_size,
                 rhs_negative_sampling_method,
                 Negatives.NONE,
+                evaluating=evaluating
             )
 
         return Scores(lhs_pos_scores, rhs_pos_scores, lhs_neg_scores, rhs_neg_scores)
@@ -1162,6 +1173,7 @@ class MultiRelationEmbedder(nn.Module):
             chunk_size: int,
             src_negative_sampling_method: Negatives,
             dst_negative_sampling_method: Negatives,
+            evaluating: bool=False
     ):
         num_pos = len(src)
         assert len(dst) == num_pos
@@ -1177,12 +1189,12 @@ class MultiRelationEmbedder(nn.Module):
         src_pos = src_pos.view((num_chunks, chunk_size, self.dim))
         dst_pos = dst_pos.view((num_chunks, chunk_size, self.dim))
 
-        src_neg, src_ignore_mask = self.prepare_negatives(
+        src_neg, src_ignore_mask = self.prepare_negatives( # calls in to actually get the negatives from sample_entities in SimpleEmbedding
             src, src_pos, src_module, src_negative_sampling_method,
-            self.num_uniform_negs, rel, src_entity_type, src_operator)
+            self.num_uniform_negs, rel, src_entity_type, src_operator, evaluating=evaluating)
         dst_neg, dst_ignore_mask = self.prepare_negatives(
             dst, dst_pos, dst_module, dst_negative_sampling_method,
-            self.num_uniform_negs, rel, dst_entity_type, dst_operator)
+            self.num_uniform_negs, rel, dst_entity_type, dst_operator, evaluating=evaluating)
 
         pos_scores, src_neg_scores, dst_neg_scores = \
             self.comparator(src_pos, dst_pos, src_neg, dst_neg)

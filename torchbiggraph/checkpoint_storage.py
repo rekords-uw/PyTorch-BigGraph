@@ -337,7 +337,7 @@ class FileCheckpointStorage(AbstractCheckpointStorage):
             hf.attrs[FORMAT_VERSION_ATTR] = FORMAT_VERSION
             for k, v in metadata.items():
                 hf.attrs[k] = v
-            save_embeddings(hf, embs)
+            save_embeddings(hf, embs) # Comment this line for livejournal on CloudLab
             save_optimizer_state_dict(hf, optim_state)
             hf.flush()
         logger.debug(f"Done saving to {path}")
