@@ -172,7 +172,7 @@ class SimpleEmbedding(AbstractEmbedding):
         if self.shuffle_mode == 'uniform' or evaluating:
             return self.get(torch.randint(low=0, high=self.weight.size(0), size=dims))
 
-        #print("GETTING NEGATIVE SAMPLE")
+        # print("GETTING NEGATIVE SAMPLE")
 
         total = dims[0] * dims[1]
 
